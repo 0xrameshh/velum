@@ -1,0 +1,15 @@
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+.env
+.env.local
+.idea/
+.vscode/
+*.swp
+.DS_Store
+coverage.out
+
+# Local agent / phase notes (not for GitHub)
+PROGRESS.md

@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package velum.v1;
+
+option go_package = "github.com/0xrameshh/velum/gen/velum/v1;velumv1";
+
+// HistoryService owns workflow state: event append and advancement.
+service HistoryService {
+  rpc StartWorkflow(StartWorkflowRequest) returns (StartWorkflowResponse);
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
+  rpc OnActivityCompleted(OnActivityCompletedRequest) returns (OnActivityCompletedResponse);
+  rpc OnActivityFailed(OnActivityFailedRequest) returns (OnActivityFailedResponse);
+  rpc HandleTerminalFailure(HandleTerminalFailureRequest) returns (HandleTerminalFailureResponse);
+  rpc OnTimerFired(OnTimerFiredRequest) returns (OnTimerFiredResponse);
+}
+
+message StartWorkflowRequest {
+  string namespace = 1;
+  string workflow_name = 2;
+  bytes input_json = 3;
+}
+
+message StartWorkflowResponse {
+  string run_id = 1;
+}
+
+message GetRunRequest {
+  string namespace = 1;
+  string run_id = 2;
+}
+
+message GetRunResponse {
+  WorkflowRun run = 1;
+  repeated Event events = 2;
+}
+
+message WorkflowRun {
+  string id = 1;
+  string namespace = 2;
+  string workflow_name = 3;
+  string status = 4;
+  bytes input_json = 5;
+  int64 created_at_unix_nano = 6;
+  int64 updated_at_unix_nano = 7;
+  optional int64 completed_at_unix_nano = 8;
+}
+
+message Event {
+  int64 id = 1;
+  string event_type = 2;
+  bytes payload_json = 3;
+  int64 created_at_unix_nano = 4;
+}
+
+message OnActivityCompletedRequest {
+  string run_id = 1;
+  string activity_name = 2;
+  string task_id = 3;
+  bytes result_json = 4;
+}
+
+message OnActivityCompletedResponse {}
+
+message OnActivityFailedRequest {
+  string run_id = 1;
+  string activity_name = 2;
+  string task_id = 3;
+  string error_message = 4;
+  bool will_retry = 5;
+}
+
+message OnActivityFailedResponse {}
+
+message HandleTerminalFailureRequest {
+  string run_id = 1;
+  string activity_name = 2;
+  string error_message = 3;
+}
+
+message HandleTerminalFailureResponse {}
+
+message OnTimerFiredRequest {
+  string run_id = 1;
+  string timer_id = 2;
+  string timer_name = 3;
+  bytes payload_json = 4;
+}
+
+message OnTimerFiredResponse {}

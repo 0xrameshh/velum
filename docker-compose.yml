@@ -1,0 +1,117 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: velum
+      POSTGRES_PASSWORD: velum
+      POSTGRES_DB: velum
+    ports:
+      - "5432:5432"
+    volumes:
+      - velum_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U velum -d velum"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  velum-migrate:
+    build: .
+    entrypoint: ["/app/velum-migrate"]
+    environment:
+      VELUM_DATABASE_URL: "postgres://velum:velum@postgres:5432/velum?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  velum-history:
+    build: .
+    entrypoint: ["/app/velum-history"]
+    ports:
+      - "9091:9091"
+    environment:
+      VELUM_HISTORY_GRPC_ADDR: ":9091"
+      VELUM_DATABASE_URL: "postgres://velum:velum@postgres:5432/velum?sslmode=disable"
+      VELUM_MIGRATE_ON_STARTUP: "false"
+    depends_on:
+      velum-migrate:
+        condition: service_completed_successfully
+
+  velum-api:
+    build: .
+    entrypoint: ["/app/velum-api"]
+    ports:
+      - "8080:8080"
+    environment:
+      VELUM_HTTP_ADDR: ":8080"
+      VELUM_HISTORY_GRPC_ADDR: "velum-history:9091"
+    depends_on:
+      - velum-history
+
+  velum-matcher:
+    build: .
+    entrypoint: ["/app/velum-matcher"]
+    ports:
+      - "9090:9090"
+    environment:
+      VELUM_GRPC_ADDR: ":9090"
+      VELUM_HISTORY_GRPC_ADDR: "velum-history:9091"
+      VELUM_DATABASE_URL: "postgres://velum:velum@postgres:5432/velum?sslmode=disable"
+      VELUM_LEASE_RECLAIM_EVERY: "5s"
+    depends_on:
+      - velum-history
+      velum-migrate:
+        condition: service_completed_successfully
+
+  velum-scheduler:
+    build: .
+    entrypoint: ["/app/velum-scheduler"]
+    environment:
+      VELUM_HISTORY_GRPC_ADDR: "velum-history:9091"
+      VELUM_DATABASE_URL: "postgres://velum:velum@postgres:5432/velum?sslmode=disable"
+      VELUM_SCHEDULER_POLL_EVERY: "1s"
+      VELUM_SCHEDULER_BATCH_SIZE: "50"
+    depends_on:
+      - velum-history
+      velum-migrate:
+        condition: service_completed_successfully
+
+  worker-default:
+    build: .
+    entrypoint: ["/app/velum-worker"]
+    environment:
+      VELUM_GRPC_ADDR: "velum-matcher:9090"
+      VELUM_WORKER_ID: "worker-default-1"
+      VELUM_TASK_QUEUE: "default"
+      VELUM_WORKER_POLL_EVERY: "300ms"
+      VELUM_TASK_LEASE: "30s"
+    depends_on:
+      - velum-matcher
+
+  worker-email:
+    build: .
+    entrypoint: ["/app/velum-worker"]
+    environment:
+      VELUM_GRPC_ADDR: "velum-matcher:9090"
+      VELUM_WORKER_ID: "worker-email-1"
+      VELUM_TASK_QUEUE: "email"
+      VELUM_WORKER_POLL_EVERY: "300ms"
+      VELUM_TASK_LEASE: "30s"
+    depends_on:
+      - velum-matcher
+
+  worker-payments:
+    build: .
+    entrypoint: ["/app/velum-worker"]
+    environment:
+      VELUM_GRPC_ADDR: "velum-matcher:9090"
+      VELUM_WORKER_ID: "worker-payments-1"
+      VELUM_TASK_QUEUE: "payments"
+      VELUM_WORKER_POLL_EVERY: "300ms"
+      VELUM_TASK_LEASE: "30s"
+    depends_on:
+      - velum-matcher
+
+volumes:
+  velum_pg_data:

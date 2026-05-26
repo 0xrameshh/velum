@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package velum.v1;
+
+option go_package = "github.com/0xrameshh/velum/gen/velum/v1;velumv1";
+
+// WorkerService is the task-matching API for external worker processes.
+service WorkerService {
+  rpc PollTask(PollTaskRequest) returns (PollTaskResponse);
+  rpc RecordHeartbeat(RecordHeartbeatRequest) returns (RecordHeartbeatResponse);
+  rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
+  rpc FailTask(FailTaskRequest) returns (FailTaskResponse);
+}
+
+message PollTaskRequest {
+  string worker_id = 1;
+  string task_queue = 2;
+  int64 lease_seconds = 3;
+}
+
+message PollTaskResponse {
+  bool has_task = 1;
+  Task task = 2;
+}
+
+message RecordHeartbeatRequest {
+  string worker_id = 1;
+  string task_id = 2;
+  int64 extend_lease_seconds = 3;
+}
+
+message RecordHeartbeatResponse {
+  bool ok = 1;
+}
+
+message CompleteTaskRequest {
+  string worker_id = 1;
+  string task_id = 2;
+  string idempotency_key = 3;
+  bytes result_json = 4;
+}
+
+message CompleteTaskResponse {
+  bool already_applied = 1;
+}
+
+message FailTaskRequest {
+  string worker_id = 1;
+  string task_id = 2;
+  string idempotency_key = 3;
+  string error_message = 4;
+  bool will_retry = 5;
+}
+
+message FailTaskResponse {
+  bool already_applied = 1;
+}
+
+message Task {
+  string id = 1;
+  string run_id = 2;
+  string task_type = 3;
+  string activity_name = 4;
+  string task_queue = 5;
+  bytes payload_json = 6;
+  int32 attempt = 7;
+  int32 max_attempts = 8;
+}

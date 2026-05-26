@@ -1,0 +1,11 @@
+.git
+.github
+bin
+dist
+*.md
+.env
+.env.*
+.idea
+.vscode
+**/*_test.go
+coverage.out
