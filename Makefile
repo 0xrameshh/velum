@@ -1,4 +1,4 @@
-.PHONY: help proto build build-worker test run run-api run-matcher run-scheduler up down logs curl-start curl-status curl-delayed-start curl-delayed-status curl-saga-start curl-saga-fail curl-saga-status clean
+.PHONY: help proto build build-worker test test-integration test-all bench run run-api run-matcher run-scheduler up down logs curl-start curl-status curl-delayed-start curl-delayed-status curl-saga-start curl-saga-fail curl-saga-status clean
 
 help:
 	@echo "Targets: proto build test run up down logs smoke curl-* (see Makefile)"
@@ -68,6 +68,15 @@ down:
 
 logs:
 	docker compose logs -f velum-history velum-api velum-matcher-default velum-matcher-email velum-matcher-payments velum-scheduler worker-default worker-email worker-payments redis
+
+test-integration:
+	go test -tags=integration -count=1 -timeout=120s ./internal/persistence/ ./internal/history/
+
+test-all:
+	go test -tags=integration -count=1 -timeout=120s ./...
+
+bench:
+	go test -tags=integration -bench=. -benchtime=200ms ./internal/persistence/
 
 smoke: up
 	@echo "waiting for stack..."
