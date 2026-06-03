@@ -15,6 +15,16 @@ services:
       timeout: 3s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   velum-migrate:
     build: .
     entrypoint: ["/app/velum-migrate"]
@@ -34,22 +44,26 @@ services:
       VELUM_HISTORY_GRPC_ADDR: ":9091"
       VELUM_DATABASE_URL: "postgres://velum:velum@postgres:5432/velum?sslmode=disable"
       VELUM_MIGRATE_ON_STARTUP: "false"
+      VELUM_DISPATCH: "redis"
+      VELUM_REDIS_ADDR: "redis:6379"
     depends_on:
       velum-migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   velum-api:
     build: .
     entrypoint: ["/app/velum-api"]
     ports:
-      - "8080:8080"
+      - "${VELUM_HOST_HTTP_PORT:-8080}:8080"
     environment:
       VELUM_HTTP_ADDR: ":8080"
       VELUM_HISTORY_GRPC_ADDR: "velum-history:9091"
     depends_on:
       - velum-history
 
-  velum-matcher:
+  velum-matcher-default:
     build: .
     entrypoint: ["/app/velum-matcher"]
     ports:
@@ -58,11 +72,59 @@ services:
       VELUM_GRPC_ADDR: ":9090"
       VELUM_HISTORY_GRPC_ADDR: "velum-history:9091"
       VELUM_DATABASE_URL: "postgres://velum:velum@postgres:5432/velum?sslmode=disable"
+      VELUM_MATCHER_QUEUES: "default"
+      VELUM_DISPATCH: "redis"
+      VELUM_REDIS_ADDR: "redis:6379"
       VELUM_LEASE_RECLAIM_EVERY: "5s"
     depends_on:
-      - velum-history
+      velum-history:
+        condition: service_started
       velum-migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  velum-matcher-email:
+    build: .
+    entrypoint: ["/app/velum-matcher"]
+    ports:
+      - "9092:9090"
+    environment:
+      VELUM_GRPC_ADDR: ":9090"
+      VELUM_HISTORY_GRPC_ADDR: "velum-history:9091"
+      VELUM_DATABASE_URL: "postgres://velum:velum@postgres:5432/velum?sslmode=disable"
+      VELUM_MATCHER_QUEUES: "email"
+      VELUM_DISPATCH: "redis"
+      VELUM_REDIS_ADDR: "redis:6379"
+      VELUM_LEASE_RECLAIM_EVERY: "5s"
+    depends_on:
+      velum-history:
+        condition: service_started
+      velum-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  velum-matcher-payments:
+    build: .
+    entrypoint: ["/app/velum-matcher"]
+    ports:
+      - "9093:9090"
+    environment:
+      VELUM_GRPC_ADDR: ":9090"
+      VELUM_HISTORY_GRPC_ADDR: "velum-history:9091"
+      VELUM_DATABASE_URL: "postgres://velum:velum@postgres:5432/velum?sslmode=disable"
+      VELUM_MATCHER_QUEUES: "payments"
+      VELUM_DISPATCH: "redis"
+      VELUM_REDIS_ADDR: "redis:6379"
+      VELUM_LEASE_RECLAIM_EVERY: "5s"
+    depends_on:
+      velum-history:
+        condition: service_started
+      velum-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   velum-scheduler:
     build: .
@@ -72,46 +134,51 @@ services:
       VELUM_DATABASE_URL: "postgres://velum:velum@postgres:5432/velum?sslmode=disable"
       VELUM_SCHEDULER_POLL_EVERY: "1s"
       VELUM_SCHEDULER_BATCH_SIZE: "50"
+      VELUM_DISPATCH: "redis"
+      VELUM_REDIS_ADDR: "redis:6379"
     depends_on:
-      - velum-history
+      velum-history:
+        condition: service_started
       velum-migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   worker-default:
     build: .
     entrypoint: ["/app/velum-worker"]
     environment:
-      VELUM_GRPC_ADDR: "velum-matcher:9090"
+      VELUM_GRPC_ADDR: "velum-matcher-default:9090"
       VELUM_WORKER_ID: "worker-default-1"
       VELUM_TASK_QUEUE: "default"
       VELUM_WORKER_POLL_EVERY: "300ms"
       VELUM_TASK_LEASE: "30s"
     depends_on:
-      - velum-matcher
+      - velum-matcher-default
 
   worker-email:
     build: .
     entrypoint: ["/app/velum-worker"]
     environment:
-      VELUM_GRPC_ADDR: "velum-matcher:9090"
+      VELUM_GRPC_ADDR: "velum-matcher-email:9090"
       VELUM_WORKER_ID: "worker-email-1"
       VELUM_TASK_QUEUE: "email"
       VELUM_WORKER_POLL_EVERY: "300ms"
       VELUM_TASK_LEASE: "30s"
     depends_on:
-      - velum-matcher
+      - velum-matcher-email
 
   worker-payments:
     build: .
     entrypoint: ["/app/velum-worker"]
     environment:
-      VELUM_GRPC_ADDR: "velum-matcher:9090"
+      VELUM_GRPC_ADDR: "velum-matcher-payments:9090"
       VELUM_WORKER_ID: "worker-payments-1"
       VELUM_TASK_QUEUE: "payments"
       VELUM_WORKER_POLL_EVERY: "300ms"
       VELUM_TASK_LEASE: "30s"
     depends_on:
-      - velum-matcher
+      - velum-matcher-payments
 
 volumes:
   velum_pg_data:

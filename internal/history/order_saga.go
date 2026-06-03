@@ -37,47 +37,68 @@ func (s *Service) startOrderSaga(ctx context.Context, runID uuid.UUID, input any
 }
 
 func (s *Service) advanceOrderSaga(ctx context.Context, runID uuid.UUID, activityName string, result any) error {
+	// Fast path: ship and compensation phases don't race (single path/task at a time).
+	{
+		var state OrderSagaState
+		if err := s.store.GetRunState(ctx, runID, &state); err != nil {
+			return err
+		}
+		state.normalize()
+		switch state.Phase {
+		case orderPhaseShip:
+			return s.orderSagaShipComplete(ctx, runID, result)
+		case orderPhaseCompensating:
+			return s.advanceSagaCompensation(ctx, runID, activityName)
+		}
+	}
+
+	// prep_parallel phase: concurrent branches may race. Use atomic read-modify-write
+	// with row-level locking (FOR UPDATE) to serialize state mutations.
 	var state OrderSagaState
-	if err := s.store.GetRunState(ctx, runID, &state); err != nil {
+	var transition bool
+	err := s.store.AtomicUpdateRunState(ctx, runID, &state, func() error {
+		state.normalize()
+
+		if state.Phase != orderPhasePrepParallel {
+			return nil // already moved on
+		}
+		if state.Parallel == nil {
+			return fmt.Errorf("order_saga: missing parallel gate")
+		}
+
+		state.Parallel.Completed[activityName] = result
+		state.PrepResults[activityName] = result
+
+		if len(state.Parallel.Completed) < len(state.Parallel.Expected) {
+			return nil // not all done yet; atomic update auto-saves
+		}
+
+		// All parallel branches completed — transition to ship
+		state.Phase = orderPhaseShip
+		state.Parallel = nil
+		transition = true
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 
-	switch state.Phase {
-	case orderPhasePrepParallel:
-		return s.orderSagaPrepComplete(ctx, runID, &state, activityName, result)
-	case orderPhaseShip:
-		return s.orderSagaShipComplete(ctx, runID, result)
-	case orderPhaseCompensating:
-		return s.orderSagaCompensationComplete(ctx, runID, &state, activityName)
-	default:
+	if !transition {
 		return nil
 	}
-}
 
-func (s *Service) orderSagaPrepComplete(ctx context.Context, runID uuid.UUID, state *OrderSagaState, activityName string, result any) error {
-	if state.Parallel == nil {
-		return fmt.Errorf("order_saga: missing parallel gate")
-	}
-	state.Parallel.Completed[activityName] = result
-	state.PrepResults[activityName] = result
-
-	if len(state.Parallel.Completed) < len(state.Parallel.Expected) {
-		return s.store.SetRunState(ctx, runID, state)
-	}
-
+	// Side effects after state is safely committed
 	if err := s.store.AppendEvent(ctx, runID, events.ParallelBranchCompleted, events.ParallelBranchCompletedPayload{
-		GroupID: state.Parallel.GroupID,
-		Results: state.Parallel.Completed,
+		GroupID: "prep",
+		Results: state.PrepResults,
 	}); err != nil {
 		return err
 	}
 
-	state.Phase = orderPhaseShip
-	state.Parallel = nil
-	if err := s.store.SetRunState(ctx, runID, state); err != nil {
-		return err
-	}
+	return s.scheduleShipOrder(ctx, runID, state.PrepResults)
+}
 
+func (s *Service) scheduleShipOrder(ctx context.Context, runID uuid.UUID, prepResults map[string]any) error {
 	run, err := s.store.GetRunByID(ctx, runID)
 	if err != nil {
 		return err
@@ -86,7 +107,7 @@ func (s *Service) orderSagaPrepComplete(ctx context.Context, runID uuid.UUID, st
 	_, err = s.scheduleActivity(ctx, runID, persistence.QueueDefault, "ship_order", map[string]any{
 		"order_id":     in["order_id"],
 		"input":        in,
-		"prep_results": state.PrepResults,
+		"prep_results": prepResults,
 	})
 	return err
 }
@@ -105,6 +126,7 @@ func (s *Service) orderSagaTerminalFailure(ctx context.Context, runID uuid.UUID,
 	if err := s.store.GetRunState(ctx, runID, &state); err != nil {
 		return err
 	}
+	state.normalize()
 
 	if activityName == "ship_order" && state.Phase == orderPhaseShip {
 		return s.beginOrderSagaCompensation(ctx, runID, &state, errMsg)
@@ -163,7 +185,17 @@ func (s *Service) beginOrderSagaCompensation(ctx context.Context, runID uuid.UUI
 	return err
 }
 
-func (s *Service) orderSagaCompensationComplete(ctx context.Context, runID uuid.UUID, state *OrderSagaState, activityName string) error {
+func (s *Service) advanceSagaCompensation(ctx context.Context, runID uuid.UUID, activityName string) error {
+	var state OrderSagaState
+	if err := s.store.GetRunState(ctx, runID, &state); err != nil {
+		return err
+	}
+	state.normalize()
+
+	if state.Phase != orderPhaseCompensating {
+		return nil
+	}
+
 	if state.CompIndex >= len(state.Compensations)-1 {
 		return s.FailWorkflow(ctx, runID, state.FailureReason)
 	}

@@ -1,6 +1,9 @@
 package history
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestParallelGateWaitsForAll(t *testing.T) {
 	t.Parallel()
@@ -17,6 +20,24 @@ func TestParallelGateWaitsForAll(t *testing.T) {
 	if len(gate.Completed) < len(gate.Expected) {
 		t.Fatal("should be complete after both branches")
 	}
+}
+
+func TestOrderSagaStateNormalize(t *testing.T) {
+	t.Parallel()
+	var raw = []byte(`{"phase":"prep_parallel","parallel":{"group_id":"prep","expected":["a","b"]}}`)
+	var state OrderSagaState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	state.normalize()
+	if state.PrepResults == nil {
+		t.Fatal("PrepResults should be initialized")
+	}
+	if state.Parallel.Completed == nil {
+		t.Fatal("Parallel.Completed should be initialized")
+	}
+	state.PrepResults["x"] = 1
+	state.Parallel.Completed["a"] = true
 }
 
 func TestCompensationStackOrder(t *testing.T) {

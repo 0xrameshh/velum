@@ -34,7 +34,11 @@ func (s *Store) CreateTimer(ctx context.Context, runID uuid.UUID, timerName stri
 		INSERT INTO timers (id, run_id, timer_name, fire_at, status, payload_json)
 		VALUES ($1, $2, $3, $4, 'pending', $5::jsonb)
 	`, timerID, runID, timerName, fireAt, string(payloadJSON))
-	return timerID, err
+	if err != nil {
+		return uuid.Nil, err
+	}
+	_ = s.dispatch.NotifyTimer(ctx, timerID, fireAt)
+	return timerID, nil
 }
 
 // FireDueTimers atomically marks due timers as fired and returns them.

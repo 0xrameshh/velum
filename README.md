@@ -6,12 +6,25 @@ Durable workflow orchestration platform in Go — event-sourced runs, task leasi
 
 ## Quick start (Docker)
 
-Starts split control plane (`velum-history` `:9091`, `velum-api` `:8080`, `velum-matcher` `:9090`, `velum-scheduler`) plus workers on `default`, `email`, and `payments` queues.
+Starts split control plane with **Redis wake dispatch** and **per-queue matchers** (`default` `:9090`, `email` `:9092`, `payments` `:9093`), plus `velum-history`, `velum-api`, and `velum-scheduler`.
 
 ```bash
 docker compose up --build -d
+make smoke   # greet + delayed_greet + order_saga
+```
+
+API listens on port **8080** by default. If that port is taken, set `VELUM_HOST_HTTP_PORT=8088` (or any free port) before `docker compose up` and `make smoke`:
+
+```bash
+VELUM_HOST_HTTP_PORT=8088 docker compose up --build -d
+VELUM_HOST_HTTP_PORT=8088 make smoke
+```
+
+Or step by step:
+
+```bash
 make curl-start
-sleep 1
+sleep 2
 make curl-status
 ```
 
@@ -139,7 +152,22 @@ Protos: `proto/velum/v1/worker.proto`, `proto/velum/v1/history.proto` — regene
 | `VELUM_SCHEDULER_BATCH_SIZE` | scheduler | Max timers per tick |
 | `VELUM_LEASE_RECLAIM_EVERY` | matcher | Reclaim expired task leases |
 | `VELUM_TASK_QUEUE` | worker | Queue to poll |
+| `VELUM_DISPATCH` | history, matcher, scheduler | `postgres` (default) or `redis` |
+| `VELUM_REDIS_ADDR` | history, matcher, scheduler | Redis address when dispatch=redis |
+| `VELUM_MATCHER_QUEUES` | matcher | Comma-separated queues this matcher serves (empty = all) |
+| `VELUM_DISPATCH_WAIT` | matcher | Redis BRPOP wait before re-polling Postgres |
 | `VELUM_ENABLE_EMBEDDED_WORKER` | `velum` only | In-process DB poller (dev) |
+
+## Scaling (Phase 7)
+
+Postgres remains the source of truth. Redis is an optional **wake signal** only:
+
+- **Tasks:** history LPUSHes on create; matcher BRPOPs then leases from Postgres
+- **Timers:** history publishes on create; scheduler wakes early instead of blind polling
+
+Run one matcher per queue in Compose (`velum-matcher-default`, `velum-matcher-email`, `velum-matcher-payments`). Point each worker at its queue's matcher via `VELUM_GRPC_ADDR`.
+
+Set `VELUM_DISPATCH=postgres` to disable Redis (legacy polling-only mode).
 
 ## Architecture
 
@@ -147,12 +175,21 @@ Protos: `proto/velum/v1/worker.proto`, `proto/velum/v1/history.proto` — regene
 flowchart LR
   Client --> API[velum-api]
   API --> Hist[velum-history]
-  Match[velum-matcher] --> Hist
-  Sched[velum-scheduler] --> Hist
+  Hist --> Redis[(Redis wake)]
   Hist --> PG[(PostgreSQL)]
-  Match --> PG
+  MatchD[matcher default] --> Hist
+  MatchE[matcher email] --> Hist
+  MatchP[matcher payments] --> Hist
+  MatchD --> Redis
+  MatchE --> Redis
+  MatchP --> Redis
+  MatchD --> PG
+  Sched[velum-scheduler] --> Hist
+  Sched --> Redis
   Sched --> PG
-  W1[worker] --> Match
+  W1[worker default] --> MatchD
+  W2[worker email] --> MatchE
+  W3[worker payments] --> MatchP
 ```
 
 ## Roadmap
@@ -162,7 +199,7 @@ flowchart LR
 - [x] Phase 4: Parallel branches + saga compensation
 - [x] Phase 5: Split control-plane binaries
 - [x] Phase 6: History gRPC service
-- [ ] Phase 7: Optional dispatch bus + scale-out
+- [x] Phase 7: Redis dispatch + per-queue matchers
 
 ## License
 

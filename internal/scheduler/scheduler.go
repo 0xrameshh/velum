@@ -6,43 +6,60 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/0xrameshh/velum/internal/dispatch"
 	"github.com/0xrameshh/velum/internal/history"
 	"github.com/0xrameshh/velum/internal/persistence"
 )
 
 type Scheduler struct {
-	store   *persistence.Store
-	history history.Client
-	every   time.Duration
-	batch   int
+	store           *persistence.Store
+	history         history.Client
+	every           time.Duration
+	batch           int
+	dispatch        dispatch.Notifier
+	dispatchEnabled bool
 }
 
-func New(store *persistence.Store, hist history.Client, every time.Duration, batch int) *Scheduler {
+func New(store *persistence.Store, hist history.Client, every time.Duration, batch int, d dispatch.Notifier, dispatchEnabled bool) *Scheduler {
 	if batch < 1 {
 		batch = 50
 	}
+	if d == nil {
+		d = dispatch.NewNoop()
+	}
 	return &Scheduler{
-		store:   store,
-		history: hist,
-		every:   every,
-		batch:   batch,
+		store:           store,
+		history:         hist,
+		every:           every,
+		batch:           batch,
+		dispatch:        d,
+		dispatchEnabled: dispatchEnabled,
 	}
 }
 
 func (s *Scheduler) Run(ctx context.Context) error {
-	slog.Info("timer scheduler started", "poll_every", s.every.String())
-	ticker := time.NewTicker(s.every)
-	defer ticker.Stop()
-
+	slog.Info("timer scheduler started", "poll_every", s.every.String(), "redis_wake", s.dispatchEnabled)
 	for {
+		if err := s.tick(ctx); err != nil {
+			slog.Error("scheduler tick", "error", err)
+		}
 		select {
 		case <-ctx.Done():
 			slog.Info("timer scheduler stopped")
 			return ctx.Err()
-		case <-ticker.C:
-			if err := s.tick(ctx); err != nil {
-				slog.Error("scheduler tick", "error", err)
+		default:
+		}
+		if s.dispatchEnabled {
+			if err := s.dispatch.WaitTimer(ctx, s.every); err != nil {
+				return err
 			}
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			slog.Info("timer scheduler stopped")
+			return ctx.Err()
+		case <-time.After(s.every):
 		}
 	}
 }

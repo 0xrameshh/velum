@@ -27,7 +27,17 @@ type CompensationStep struct {
 }
 
 const (
-	orderPhasePrepParallel  = "prep_parallel"
-	orderPhaseShip          = "ship"
-	orderPhaseCompensating  = "compensating"
+	orderPhasePrepParallel = "prep_parallel"
+	orderPhaseShip         = "ship"
+	orderPhaseCompensating = "compensating"
 )
+
+// normalize ensures maps are non-nil after JSON round-trips (omitempty drops empty maps).
+func (s *OrderSagaState) normalize() {
+	if s.PrepResults == nil {
+		s.PrepResults = map[string]any{}
+	}
+	if s.Parallel != nil && s.Parallel.Completed == nil {
+		s.Parallel.Completed = map[string]any{}
+	}
+}

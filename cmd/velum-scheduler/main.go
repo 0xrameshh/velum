@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/0xrameshh/velum/internal/config"
 	"github.com/0xrameshh/velum/internal/persistence"
@@ -37,8 +38,15 @@ func main() {
 	}
 	defer closeHist()
 
-	store := persistence.NewStore(pool)
-	sched := scheduler.New(store, hist, cfg.SchedulerPollEvery, cfg.SchedulerBatchSize)
+	disp, err := platform.OpenDispatch(cfg.Dispatch, cfg.RedisAddr)
+	if err != nil {
+		slog.Error("dispatch", "error", err)
+		os.Exit(1)
+	}
+	defer disp.Close()
+
+	store := persistence.NewStore(pool, disp)
+	sched := scheduler.New(store, hist, cfg.SchedulerPollEvery, cfg.SchedulerBatchSize, disp, strings.EqualFold(cfg.Dispatch, "redis"))
 
 	errCh := make(chan error, 1)
 	go func() {

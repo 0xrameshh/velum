@@ -48,7 +48,11 @@ func (s *Store) CreateTaskQueued(ctx context.Context, runID uuid.UUID, taskQueue
 		INSERT INTO tasks (id, run_id, task_queue, task_type, activity_name, status, payload_json, max_attempts)
 		VALUES ($1, $2, $3, $4, $5, 'pending', $6::jsonb, $7)
 	`, taskID, runID, queue, taskType, activityName, string(payloadJSON), maxAttempts)
-	return taskID, err
+	if err != nil {
+		return uuid.Nil, err
+	}
+	_ = s.dispatch.NotifyTask(ctx, queue, taskID)
+	return taskID, nil
 }
 
 func (s *Store) PollTaskQueue(ctx context.Context, workerID, taskQueue string, leaseUntil time.Time) (*Task, error) {

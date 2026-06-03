@@ -41,7 +41,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	store := persistence.NewStore(pool)
+	disp, err := platform.OpenDispatch(cfg.Dispatch, cfg.RedisAddr)
+	if err != nil {
+		slog.Error("dispatch", "error", err)
+		os.Exit(1)
+	}
+	defer disp.Close()
+
+	store := persistence.NewStore(pool, disp)
 	hist := history.NewService(store)
 
 	grpcSrv := grpc.NewServer()
@@ -56,7 +63,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("history grpc listening", "addr", cfg.GRPCAddr)
+		slog.Info("history grpc listening", "addr", cfg.GRPCAddr, "dispatch", cfg.Dispatch)
 		errCh <- grpcSrv.Serve(lis)
 	}()
 

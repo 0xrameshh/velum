@@ -12,35 +12,67 @@ import (
 	"google.golang.org/grpc/status"
 
 	velumv1 "github.com/0xrameshh/velum/gen/velum/v1"
+	"github.com/0xrameshh/velum/internal/dispatch"
 	"github.com/0xrameshh/velum/internal/history"
 	"github.com/0xrameshh/velum/internal/persistence"
 )
 
-type Server struct {
-	velumv1.UnimplementedWorkerServiceServer
-	store   *persistence.Store
-	history history.Client
-	lease   time.Duration
+type MatcherOptions struct {
+	Dispatch        dispatch.Notifier
+	Queues          map[string]struct{}
+	DispatchWait    time.Duration
+	DispatchEnabled bool
 }
 
-func New(store *persistence.Store, hist history.Client, lease time.Duration) *Server {
-	return &Server{
-		store:   store,
-		history: hist,
-		lease:   lease,
+type Server struct {
+	velumv1.UnimplementedWorkerServiceServer
+	store           *persistence.Store
+	history         history.Client
+	lease           time.Duration
+	dispatch        dispatch.Notifier
+	queues          map[string]struct{}
+	dispatchWait    time.Duration
+	dispatchEnabled bool
+}
+
+func New(store *persistence.Store, hist history.Client, lease time.Duration, opt MatcherOptions) *Server {
+	d := opt.Dispatch
+	if d == nil {
+		d = dispatch.NewNoop()
 	}
+	return &Server{
+		store:           store,
+		history:         hist,
+		lease:           lease,
+		dispatch:        d,
+		queues:          opt.Queues,
+		dispatchWait:    opt.DispatchWait,
+		dispatchEnabled: opt.DispatchEnabled,
+	}
+}
+
+func (s *Server) servesQueue(queue string) bool {
+	if len(s.queues) == 0 {
+		return true
+	}
+	_, ok := s.queues[persistence.NormalizeQueue(queue)]
+	return ok
 }
 
 func (s *Server) PollTask(ctx context.Context, req *velumv1.PollTaskRequest) (*velumv1.PollTaskResponse, error) {
 	if req.GetWorkerId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "worker_id required")
 	}
+	queue := persistence.NormalizeQueue(req.GetTaskQueue())
+	if !s.servesQueue(queue) {
+		return &velumv1.PollTaskResponse{HasTask: false}, nil
+	}
 	lease := s.lease
 	if req.GetLeaseSeconds() > 0 {
 		lease = time.Duration(req.GetLeaseSeconds()) * time.Second
 	}
 
-	task, err := s.store.PollTaskQueue(ctx, req.GetWorkerId(), req.GetTaskQueue(), time.Now().Add(lease))
+	task, err := s.pollQueue(ctx, req.GetWorkerId(), queue, lease)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "poll task: %v", err)
 	}
@@ -51,6 +83,21 @@ func (s *Server) PollTask(ctx context.Context, req *velumv1.PollTaskRequest) (*v
 		HasTask: true,
 		Task:    toProtoTask(task),
 	}, nil
+}
+
+func (s *Server) pollQueue(ctx context.Context, workerID, queue string, lease time.Duration) (*persistence.Task, error) {
+	until := time.Now().Add(lease)
+	task, err := s.store.PollTaskQueue(ctx, workerID, queue, until)
+	if err != nil {
+		return nil, err
+	}
+	if task != nil || !s.dispatchEnabled || s.dispatchWait <= 0 {
+		return task, nil
+	}
+	if err := s.dispatch.WaitTask(ctx, queue, s.dispatchWait); err != nil {
+		return nil, err
+	}
+	return s.store.PollTaskQueue(ctx, workerID, queue, until)
 }
 
 func (s *Server) RecordHeartbeat(ctx context.Context, req *velumv1.RecordHeartbeatRequest) (*velumv1.RecordHeartbeatResponse, error) {

@@ -7,12 +7,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
 	velumv1 "github.com/0xrameshh/velum/gen/velum/v1"
+	"github.com/0xrameshh/velum/internal/dispatch"
 	"github.com/0xrameshh/velum/internal/api"
 	"github.com/0xrameshh/velum/internal/config"
 	"github.com/0xrameshh/velum/internal/grpcserver"
@@ -48,8 +50,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	store := persistence.NewStore(pool)
+	disp := mustDispatch(cfg.Dispatch, cfg.RedisAddr)
+	defer disp.Close()
+
+	store := persistence.NewStore(pool, disp)
 	hist := history.NewService(store)
+	dispatchEnabled := strings.EqualFold(cfg.Dispatch, "redis")
 	httpSrv := api.NewServer(hist)
 
 	httpServer := &http.Server{
@@ -64,7 +70,11 @@ func main() {
 
 	if cfg.EnableGRPC {
 		grpcSrv := grpc.NewServer()
-		ws := grpcserver.New(store, hist, cfg.TaskLease)
+		ws := grpcserver.New(store, hist, cfg.TaskLease, grpcserver.MatcherOptions{
+			Dispatch:        disp,
+			DispatchWait:    2 * time.Second,
+			DispatchEnabled: dispatchEnabled,
+		})
 		velumv1.RegisterWorkerServiceServer(grpcSrv, ws)
 		reflection.Register(grpcSrv)
 
@@ -81,7 +91,7 @@ func main() {
 	}
 
 	if cfg.EnableScheduler {
-		sched := scheduler.New(store, hist, cfg.SchedulerPollEvery, cfg.SchedulerBatchSize)
+		sched := scheduler.New(store, hist, cfg.SchedulerPollEvery, cfg.SchedulerBatchSize, disp, dispatchEnabled)
 		go func() {
 			errCh <- sched.Run(ctx)
 		}()
@@ -116,4 +126,13 @@ func signalDone() <-chan struct{} {
 		close(ch)
 	}()
 	return ch
+}
+
+func mustDispatch(mode, redisAddr string) dispatch.Notifier {
+	d, err := dispatch.NewFromConfig(mode, redisAddr)
+	if err != nil {
+		slog.Error("dispatch", "error", err)
+		os.Exit(1)
+	}
+	return d
 }

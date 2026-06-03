@@ -22,6 +22,8 @@ type Config struct {
 	EnableScheduler       bool
 	SchedulerPollEvery    time.Duration
 	SchedulerBatchSize    int
+	Dispatch              string
+	RedisAddr             string
 }
 
 func Load() (Config, error) {
@@ -40,6 +42,8 @@ func Load() (Config, error) {
 		EnableScheduler:      envBoolOr("VELUM_ENABLE_SCHEDULER", true),
 		SchedulerPollEvery:   envDurationOr("VELUM_SCHEDULER_POLL_EVERY", time.Second),
 		SchedulerBatchSize:   envIntOr("VELUM_SCHEDULER_BATCH_SIZE", 50),
+		Dispatch:             envOr("VELUM_DISPATCH", "postgres"),
+		RedisAddr:            envOr("VELUM_REDIS_ADDR", "localhost:6379"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("VELUM_DATABASE_URL is required")
@@ -78,6 +82,10 @@ type MatcherConfig struct {
 	DatabaseURL       string
 	TaskLease         time.Duration
 	LeaseReclaimEvery time.Duration
+	Dispatch          string
+	RedisAddr         string
+	MatcherQueues     string
+	DispatchWait      time.Duration
 }
 
 func LoadMatcher() (MatcherConfig, error) {
@@ -87,6 +95,10 @@ func LoadMatcher() (MatcherConfig, error) {
 		DatabaseURL:       envOr("VELUM_DATABASE_URL", "postgres://velum:velum@localhost:5432/velum?sslmode=disable"),
 		TaskLease:         envDurationOr("VELUM_TASK_LEASE", 30*time.Second),
 		LeaseReclaimEvery: envDurationOr("VELUM_LEASE_RECLAIM_EVERY", 5*time.Second),
+		Dispatch:          envOr("VELUM_DISPATCH", "postgres"),
+		RedisAddr:         envOr("VELUM_REDIS_ADDR", "localhost:6379"),
+		MatcherQueues:     envOr("VELUM_MATCHER_QUEUES", ""),
+		DispatchWait:      envDurationOr("VELUM_DISPATCH_WAIT", 2*time.Second),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("VELUM_DATABASE_URL is required")
@@ -105,6 +117,8 @@ type SchedulerConfig struct {
 	HistoryGRPCAddr    string
 	SchedulerPollEvery time.Duration
 	SchedulerBatchSize int
+	Dispatch           string
+	RedisAddr          string
 }
 
 func LoadScheduler() (SchedulerConfig, error) {
@@ -113,6 +127,8 @@ func LoadScheduler() (SchedulerConfig, error) {
 		HistoryGRPCAddr:    envOr("VELUM_HISTORY_GRPC_ADDR", "localhost:9091"),
 		SchedulerPollEvery: envDurationOr("VELUM_SCHEDULER_POLL_EVERY", time.Second),
 		SchedulerBatchSize: envIntOr("VELUM_SCHEDULER_BATCH_SIZE", 50),
+		Dispatch:           envOr("VELUM_DISPATCH", "postgres"),
+		RedisAddr:          envOr("VELUM_REDIS_ADDR", "localhost:6379"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("VELUM_DATABASE_URL is required")
@@ -127,6 +143,8 @@ type HistoryConfig struct {
 	GRPCAddr         string
 	DatabaseURL      string
 	MigrateOnStartup bool
+	Dispatch         string
+	RedisAddr        string
 }
 
 func LoadHistory() (HistoryConfig, error) {
@@ -134,6 +152,8 @@ func LoadHistory() (HistoryConfig, error) {
 		GRPCAddr:         envOr("VELUM_HISTORY_GRPC_ADDR", ":9091"),
 		DatabaseURL:      envOr("VELUM_DATABASE_URL", "postgres://velum:velum@localhost:5432/velum?sslmode=disable"),
 		MigrateOnStartup: envBoolOr("VELUM_MIGRATE_ON_STARTUP", true),
+		Dispatch:         envOr("VELUM_DISPATCH", "postgres"),
+		RedisAddr:        envOr("VELUM_REDIS_ADDR", "localhost:6379"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("VELUM_DATABASE_URL is required")

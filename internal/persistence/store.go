@@ -9,14 +9,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/0xrameshh/velum/internal/dispatch"
 )
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool     *pgxpool.Pool
+	dispatch dispatch.Notifier
 }
 
-func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+func NewStore(pool *pgxpool.Pool, d dispatch.Notifier) *Store {
+	if d == nil {
+		d = dispatch.NewNoop()
+	}
+	return &Store{pool: pool, dispatch: d}
 }
 
 func (s *Store) Pool() *pgxpool.Pool {

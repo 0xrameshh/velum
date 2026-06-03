@@ -1,7 +1,9 @@
 .PHONY: help proto build build-worker test run run-api run-matcher run-scheduler up down logs curl-start curl-status curl-delayed-start curl-delayed-status curl-saga-start curl-saga-fail curl-saga-status clean
 
 help:
-	@echo "Targets: proto build test run up down logs curl-* (see Makefile)"
+	@echo "Targets: proto build test run up down logs smoke curl-* (see Makefile)"
+
+API_URL ?= http://localhost:$(or $(VELUM_HOST_HTTP_PORT),8080)
 
 proto:
 	protoc -I proto \
@@ -65,43 +67,57 @@ down:
 	docker compose down
 
 logs:
-	docker compose logs -f velum-history velum-api velum-matcher velum-scheduler worker-default worker-email worker-payments
+	docker compose logs -f velum-history velum-api velum-matcher-default velum-matcher-email velum-matcher-payments velum-scheduler worker-default worker-email worker-payments redis
+
+smoke: up
+	@echo "waiting for stack..."
+	@sleep 8
+	@$(MAKE) curl-start
+	@sleep 2
+	@$(MAKE) curl-status
+	@$(MAKE) curl-delayed-start
+	@sleep 8
+	@$(MAKE) curl-delayed-status
+	@$(MAKE) curl-saga-start
+	@sleep 3
+	@$(MAKE) curl-saga-status
+	@echo "smoke tests finished"
 
 curl-start:
-	curl -sS -X POST "http://localhost:8080/api/v1/namespaces/default/workflows/greet/start" \
+	curl -sS -X POST "$(API_URL)/api/v1/namespaces/default/workflows/greet/start" \
 		-H "Content-Type: application/json" \
 		-d '{"input":{"name":"Ramesh"}}' | tee /tmp/velum-run.json
 	@echo
 
 curl-status:
 	@RUN_ID=$$(python3 -c "import json; print(json.load(open('/tmp/velum-run.json'))['run_id'])"); \
-		curl -sS "http://localhost:8080/api/v1/namespaces/default/runs/$$RUN_ID" | python3 -m json.tool
+		curl -sS "$(API_URL)/api/v1/namespaces/default/runs/$$RUN_ID" | python3 -m json.tool
 
 curl-delayed-start:
-	curl -sS -X POST "http://localhost:8080/api/v1/namespaces/default/workflows/delayed_greet/start" \
+	curl -sS -X POST "$(API_URL)/api/v1/namespaces/default/workflows/delayed_greet/start" \
 		-H "Content-Type: application/json" \
 		-d '{"input":{"name":"Ramesh","sleep_seconds":5}}' | tee /tmp/velum-delayed-run.json
 	@echo
 
 curl-delayed-status:
 	@RUN_ID=$$(python3 -c "import json; print(json.load(open('/tmp/velum-delayed-run.json'))['run_id'])"); \
-		curl -sS "http://localhost:8080/api/v1/namespaces/default/runs/$$RUN_ID" | python3 -m json.tool
+		curl -sS "$(API_URL)/api/v1/namespaces/default/runs/$$RUN_ID" | python3 -m json.tool
 
 curl-saga-start:
-	curl -sS -X POST "http://localhost:8080/api/v1/namespaces/default/workflows/order_saga/start" \
+	curl -sS -X POST "$(API_URL)/api/v1/namespaces/default/workflows/order_saga/start" \
 		-H "Content-Type: application/json" \
 		-d '{"input":{"order_id":"ord-42","fail_ship":false}}' | tee /tmp/velum-saga-run.json
 	@echo
 
 curl-saga-fail:
-	curl -sS -X POST "http://localhost:8080/api/v1/namespaces/default/workflows/order_saga/start" \
+	curl -sS -X POST "$(API_URL)/api/v1/namespaces/default/workflows/order_saga/start" \
 		-H "Content-Type: application/json" \
 		-d '{"input":{"order_id":"ord-fail","fail_ship":true}}' | tee /tmp/velum-saga-run.json
 	@echo
 
 curl-saga-status:
 	@RUN_ID=$$(python3 -c "import json; print(json.load(open('/tmp/velum-saga-run.json'))['run_id'])"); \
-		curl -sS "http://localhost:8080/api/v1/namespaces/default/runs/$$RUN_ID" | python3 -m json.tool
+		curl -sS "$(API_URL)/api/v1/namespaces/default/runs/$$RUN_ID" | python3 -m json.tool
 
 clean:
 	rm -rf bin/

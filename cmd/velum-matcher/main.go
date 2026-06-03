@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -42,10 +43,23 @@ func main() {
 	}
 	defer closeHist()
 
-	store := persistence.NewStore(pool)
+	disp, err := platform.OpenDispatch(cfg.Dispatch, cfg.RedisAddr)
+	if err != nil {
+		slog.Error("dispatch", "error", err)
+		os.Exit(1)
+	}
+	defer disp.Close()
+
+	store := persistence.NewStore(pool, disp)
+	dispatchEnabled := strings.EqualFold(cfg.Dispatch, "redis")
 
 	grpcSrv := grpc.NewServer()
-	ws := grpcserver.New(store, hist, cfg.TaskLease)
+	ws := grpcserver.New(store, hist, cfg.TaskLease, grpcserver.MatcherOptions{
+		Dispatch:        disp,
+		Queues:          config.ParseMatcherQueues(cfg.MatcherQueues),
+		DispatchWait:    cfg.DispatchWait,
+		DispatchEnabled: dispatchEnabled,
+	})
 	velumv1.RegisterWorkerServiceServer(grpcSrv, ws)
 	reflection.Register(grpcSrv)
 
@@ -58,7 +72,7 @@ func main() {
 	errCh := make(chan error, 1)
 	go ws.RunLeaseReclaimer(ctx, cfg.LeaseReclaimEvery)
 	go func() {
-		slog.Info("grpc listening", "addr", cfg.GRPCAddr)
+		slog.Info("grpc listening", "addr", cfg.GRPCAddr, "dispatch", cfg.Dispatch, "queues", cfg.MatcherQueues)
 		errCh <- grpcSrv.Serve(lis)
 	}()
 
